@@ -25,6 +25,13 @@ function slotDate(date, hhmm) {
   return result;
 }
 
+function withTimeout(promise, ms, fallback = null) {
+  return Promise.race([
+    Promise.resolve(promise).catch(() => fallback),
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 export function latestElapsedSlot(times, now = new Date()) {
   const nowMinutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
   const valid = (Array.isArray(times) ? times : [])
@@ -88,14 +95,23 @@ class Notifier {
 
     if ('serviceWorker' in navigator) {
       try {
-        this.registration = await navigator.serviceWorker.register('./sw.js');
-        await navigator.serviceWorker.ready;
-        this.registration = (await navigator.serviceWorker.getRegistration()) ?? this.registration;
-        navigator.serviceWorker.addEventListener('message', (event) => {
-          if (event.data?.type === 'word-drill:open-review') {
-            this.onOpenReview();
-          }
-        });
+        this.registration = await withTimeout(
+          navigator.serviceWorker.register('./sw.js'),
+          5000,
+          null,
+        );
+        if (this.registration) {
+          await withTimeout(navigator.serviceWorker.ready, 5000, null);
+          this.registration =
+            (await navigator.serviceWorker.getRegistration()) ?? this.registration;
+          navigator.serviceWorker.addEventListener('message', (event) => {
+            if (event.data?.type === 'word-drill:open-review') {
+              this.onOpenReview();
+            }
+          });
+        } else {
+          console.warn('word-drill: service worker registration timed out');
+        }
       } catch (error) {
         console.warn('word-drill: service worker registration failed', error);
       }
@@ -109,7 +125,7 @@ class Notifier {
       window.addEventListener('pageshow', () => this.safeCheck({ reason: 'pageshow' }));
     }
 
-    await this.registerPeriodicSync();
+    await withTimeout(this.registerPeriodicSync(), 3000, null);
     this.refresh(settings);
     // A gentle catch-up on launch: only the latest elapsed slot is eligible,
     // and only when due words exist and that slot was not already sent.

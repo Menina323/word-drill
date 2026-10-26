@@ -277,19 +277,22 @@ async function boot() {
     const hash = location.hash.replace(/^#\/?/, '');
     if (['today', 'import', 'settings'].includes(hash)) state.route = hash;
 
-    await notifier.init({
-      settings: state.settings,
-      getDueCount: currentDueCount,
-      onOpenReview: () => {
-        if (!state.ready) {
-          pendingReview = true;
-          return;
-        }
-        startSession('review').catch((error) => showToast(error.message, 'error'));
-      },
-    });
-
+    // Render immediately. Service-worker registration must never hold the app
+    // hostage while a cache install or an unreachable CDN is pending.
     render();
+    notifier
+      .init({
+        settings: state.settings,
+        getDueCount: currentDueCount,
+        onOpenReview: () => {
+          if (!state.ready) {
+            pendingReview = true;
+            return;
+          }
+          startSession('review').catch((error) => showToast(error.message, 'error'));
+        },
+      })
+      .catch((error) => console.warn('word-drill: notifier init failed', error));
 
     const params = new URLSearchParams(location.search);
     if (params.get('review') === '1') {

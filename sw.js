@@ -1,6 +1,6 @@
 /* Word Drill service worker — offline shell + local reminder checks. */
 
-const CACHE_NAME = 'word-drill-v1.0.6';
+const CACHE_NAME = 'word-drill-v1.0.7';
 const APP_SHELL = [
   './',
   './index.html',
@@ -27,7 +27,10 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE_NAME);
-      await cache.addAll(APP_SHELL);
+      // One large/optional asset must not make the whole offline shell
+      // un-installable (e.g. a CDN hiccup on data/cet6.json). Cache what we
+      // can, then let cache-first runtime caching fill the rest.
+      await Promise.allSettled(APP_SHELL.map((url) => cache.add(url)));
       await self.skipWaiting();
     })(),
   );
