@@ -880,14 +880,117 @@ h1 em {
   transition: width 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
+.study-utility {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
+  margin: 8px 4px 0;
+}
+
+.study-utility-label {
+  color: var(--ink-faint);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.speed-switch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 42%, transparent);
+}
+
+.speed-switch button {
+  min-width: 42px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: var(--ink-faint);
+  background: transparent;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  transition:
+    color 0.2s ease,
+    background 0.2s ease;
+}
+
+.speed-switch button[aria-pressed="true"] {
+  color: var(--bg-0);
+  background: var(--ink);
+}
+
 .word-stage {
   position: relative;
   display: grid;
   place-items: center;
   flex: 1;
   min-height: 0;
-  padding: 24px 0 40px;
+  padding: 18px 0 86px;
   text-align: center;
+}
+
+.word-meaning {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: 32px;
+  width: min(88%, 560px);
+  color: var(--ink-soft);
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-50%, 8px);
+  pointer-events: none;
+}
+
+.word-meaning.is-visible {
+  visibility: visible;
+  animation: meaning-in 0.24s cubic-bezier(0.16, 0.84, 0.24, 1) both;
+}
+
+@keyframes meaning-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+    filter: blur(0);
+  }
+}
+
+.meaning-label {
+  display: inline-block;
+  margin-bottom: 5px;
+  color: var(--accent);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.18em;
+}
+
+.word-meaning p {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: clamp(12.5px, 3.5vw, 15px);
+  line-height: 1.65;
+  letter-spacing: 0.015em;
+  text-wrap: pretty;
+}
+
+.word-block.is-static {
+  animation: none;
 }
 
 .word-halo {
