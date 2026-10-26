@@ -67,6 +67,9 @@ function sanitizeSettings(raw) {
       ? Math.max(0, Math.min(100, Math.round(Number(source.eGroupDailyLimit))))
       : DEFAULT_SETTINGS.eGroupDailyLimit,
     theme: ['auto', 'light', 'dark'].includes(source.theme) ? source.theme : DEFAULT_SETTINGS.theme,
+    revealSpeed: ['fast', 'normal', 'slow'].includes(source.revealSpeed)
+      ? source.revealSpeed
+      : DEFAULT_SETTINGS.revealSpeed,
   };
 }
 
