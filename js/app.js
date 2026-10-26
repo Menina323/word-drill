@@ -10,6 +10,7 @@ import {
   DEFAULT_SETTINGS,
   GROUP_DESC,
   GROUP_INFO,
+  REVEAL_SPEEDS,
   buildNewQueue,
   buildReviewQueue,
   answerKnown,
@@ -111,6 +112,8 @@ const state = {
   backfillResult: null,
   scrollTarget: '',
   persisted: false,
+  reveal: null,
+  revealTimer: null,
 };
 
 let toastTimer = null;
@@ -541,8 +544,19 @@ function renderStudy() {
   const modeLabel = session.mode === 'new' ? '新词' : '生词复习';
   const wordClass =
     word.text.length > 16 ? 'word word--xlong' : word.text.length > 11 ? 'word word--long' : 'word';
+  const revealed = Boolean(state.reveal && state.reveal.wordId === word.id);
+  const meaning = revealed ? state.reveal.definition : '';
+  const speed = state.settings.revealSpeed in REVEAL_SPEEDS ? state.settings.revealSpeed : 'normal';
+  const speedButtons = Object.entries(REVEAL_SPEEDS)
+    .map(
+      ([key, info]) =>
+        `<button type="button" data-action="set-reveal-speed" data-speed="${key}" aria-pressed="${
+          speed === key
+        }" title="汉译停留 ${(info.ms / 1000).toFixed(1)} 秒">${info.label}</button>`,
+    )
+    .join('');
 
-  return `<div class="screen screen--study">
+  return `<div class="screen screen--study${revealed ? ' is-revealing' : ''}">
     <header class="study-head">
       <button class="icon-button glass" data-action="exit-study" aria-label="结束本轮">${icon('close')}</button>
       <div class="study-meta">
@@ -554,9 +568,14 @@ function renderStudy() {
 
     <div class="progress-rail" aria-hidden="true"><span style="width:${progress}%"></span></div>
 
+    <div class="study-utility">
+      <span class="study-utility-label">作答后汉译</span>
+      <div class="speed-switch" role="group" aria-label="汉译停留时长">${speedButtons}</div>
+    </div>
+
     <main class="word-stage">
       <div class="word-halo" aria-hidden="true"></div>
-      <div class="word-block" key="${esc(word.id)}-${cursor}">
+      <div class="word-block${revealed ? ' is-static' : ''}" key="${esc(word.id)}-${cursor}">
         <h1 class="${wordClass}" aria-live="polite">${esc(word.text)}</h1>
         ${
           word.phonetic
@@ -564,7 +583,19 @@ function renderStudy() {
             : '<p class="phonetic phonetic--empty" aria-hidden="true">&nbsp;</p>'
         }
       </div>
-      <p class="study-hint">${session.mode === 'review' ? '凭第一反应作答' : '不认识也没关系'}</p>
+      <div class="word-meaning${revealed ? ' is-visible' : ''}" aria-live="polite" aria-hidden="${
+        revealed ? 'false' : 'true'
+      }">
+        <span class="meaning-label">汉译</span>
+        <p>${esc(meaning)}</p>
+      </div>
+      <p class="study-hint">${
+        revealed
+          ? '汉译已显示 · 即将下一词'
+          : session.mode === 'review'
+            ? '凭第一反应作答'
+            : '不认识也没关系'
+      }</p>
     </main>
 
     <div class="answer-bar" role="group" aria-label="作答">
@@ -981,6 +1012,25 @@ function renderSettings() {
 
         <section class="panel settings-panel">
           <div class="section-head">
+            <h2>学习反馈</h2>
+            <span>作答后</span>
+          </div>
+          <p class="panel-copy">点「认识」或「不认识」后，短暂显示该词汉译，再自动进入下一词。</p>
+          <div class="segmented segmented--theme" role="tablist" aria-label="汉译停留时长">
+            ${Object.entries(REVEAL_SPEEDS)
+              .map(
+                ([value, info]) =>
+                  `<button role="tab" aria-selected="${state.settings.revealSpeed === value}" data-action="set-reveal-speed" data-speed="${value}">${info.label} · ${(
+                    info.ms / 1000
+                  ).toFixed(1)}s</button>`,
+              )
+              .join('')}
+          </div>
+          <p class="panel-note">刷词页顶部也有一排「快 / 标准 / 慢」，不用回设置页。</p>
+        </section>
+
+        <section class="panel settings-panel">
+          <div class="section-head">
             <h2>外观</h2>
             <span>默认跟随系统</span>
           </div>
@@ -1096,6 +1146,7 @@ async function startSession(mode, { dueOnly = false } = {}) {
 }
 
 function exitSession() {
+  clearReveal();
   speech.stop();
   state.session = null;
   state.busy = false;
@@ -1105,13 +1156,41 @@ function exitSession() {
 
 async function restartSession() {
   if (!state.session) return;
+  clearReveal();
   const { mode, scope } = state.session;
   state.session = null;
   await startSession(mode, { dueOnly: scope === 'due' });
 }
 
+function clearReveal({ unlock = true } = {}) {
+  if (state.revealTimer) {
+    clearTimeout(state.revealTimer);
+    state.revealTimer = null;
+  }
+  state.reveal = null;
+  if (unlock) state.busy = false;
+}
+
+function advanceAfterReveal() {
+  const session = state.session;
+  const reveal = state.reveal;
+  if (!session || !reveal) return;
+  state.revealTimer = null;
+  state.reveal = null;
+  state.busy = false;
+  session.index = reveal.nextIndex;
+  if (session.index >= session.ids.length) {
+    finishSession().catch((error) => {
+      console.error(error);
+      showToast(`结束本轮失败：${error.message}`, 'error');
+    });
+    return;
+  }
+  render();
+}
+
 async function handleAnswer(value) {
-  if (state.busy || !state.session) return;
+  if (state.busy || state.reveal || !state.session) return;
   const session = state.session;
   const word = state.wordMap.get(session.ids[session.index]);
   if (!word) {
@@ -1143,26 +1222,42 @@ async function handleAnswer(value) {
     await wordStore.putWord(updated);
     replaceWord(updated);
     session.results[value] += 1;
-    session.index += 1;
 
     await ensureEGate({ persist: true });
     recomputeStats();
 
-    if (session.index >= session.ids.length) {
-      await finishSession();
-    } else {
-      state.busy = false;
-      render();
+    if (value === 'easy') {
+      session.index += 1;
+      if (session.index >= session.ids.length) await finishSession();
+      else {
+        state.busy = false;
+        render();
+      }
+      return;
     }
+
+    const nextIndex = session.index + 1;
+    const speed = REVEAL_SPEEDS[state.settings.revealSpeed]
+      ? state.settings.revealSpeed
+      : 'normal';
+    state.reveal = {
+      wordId: word.id,
+      definition: (updated.definition || word.definition || '暂无汉译').trim(),
+      nextIndex,
+    };
+    state.busy = true;
+    render();
+    state.revealTimer = setTimeout(advanceAfterReveal, REVEAL_SPEEDS[speed].ms);
   } catch (error) {
     console.error(error);
-    state.busy = false;
+    clearReveal();
     showToast(`保存失败：${error.message}`, 'error');
     render();
   }
 }
 
 async function finishSession() {
+  clearReveal({ unlock: false });
   state.busy = false;
   state.route = 'summary';
   history.replaceState({ route: 'summary' }, '', '#/summary');
@@ -1178,6 +1273,17 @@ async function updateSettings(patch, { rerender = false } = {}) {
   recomputeStats();
   notifier.refresh(state.settings);
   if (rerender) render();
+}
+
+async function setRevealSpeed(speed) {
+  if (!(speed in REVEAL_SPEEDS)) return;
+  state.settings = sanitizeSettings({ ...state.settings, revealSpeed: speed });
+  render();
+  try {
+    await wordStore.saveSettings(state.settings);
+  } catch (error) {
+    showToast(`保存失败：${error.message}`, 'error');
+  }
 }
 
 async function importEntries(entries, source, meta = {}) {
@@ -1331,6 +1437,7 @@ async function restoreBackupFile(file) {
     );
     if (!confirmed) return;
 
+    clearReveal();
     state.busy = true;
     state.busyLabel = '正在恢复备份…';
     render();
@@ -1364,6 +1471,7 @@ async function clearAllData() {
     '清空全部词库、学习进度和设置？这个操作不可撤销。建议先导出备份。',
   );
   if (!confirmed) return;
+  clearReveal();
   await wordStore.clearAll();
   state.words = [];
   state.wordMap = new Map();
@@ -1500,6 +1608,9 @@ async function onClick(event) {
       }
       case 'toggle-sound':
         await updateSettings({ soundEnabled: !state.settings.soundEnabled }, { rerender: true });
+        break;
+      case 'set-reveal-speed':
+        await setRevealSpeed(actionEl.dataset.speed);
         break;
       case 'theme':
         state.settings = sanitizeSettings({ ...state.settings, theme: actionEl.dataset.themeChoice });
@@ -1651,6 +1762,8 @@ window.addEventListener('popstate', () => {
     state.route = route;
   }
   if (!['study', 'summary'].includes(state.route)) {
+    clearReveal();
+    state.session = null;
     state.busy = false;
     state.busyLabel = '';
   }
