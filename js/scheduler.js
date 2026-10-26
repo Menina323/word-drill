@@ -10,7 +10,7 @@ export const ACTIVE_GROUPS = ['A', 'B', 'C', 'D', 'E'];
 export const GROUP_DESC = ['E', 'D', 'C', 'B', 'A'];
 
 export const REVEAL_SPEEDS = {
-  fast: { label: '快', ms: 1000 },
+  fast: { label: '快', ms: 500 },
   normal: { label: '标准', ms: 2000 },
   slow: { label: '慢', ms: 3200 },
 };
