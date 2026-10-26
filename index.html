@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+    />
+    <title>词潮 · 英语刷词器</title>
+    <meta
+      name="description"
+      content="离线英语刷词器：五级生词本、三键作答、IndexedDB 本地进度、本地提醒。"
+    />
+    <meta name="theme-color" content="#f4f0e6" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="format-detection" content="telephone=no" />
+
+    <script>
+      // Resolve the automatic theme before first paint; app.js applies the saved
+      // auto/light/dark choice once IndexedDB settings are available.
+      document.documentElement.dataset.theme = window.matchMedia('(prefers-color-scheme: dark)')
+        .matches
+        ? 'dark'
+        : 'light';
+    </script>
+
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="./favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="词潮" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="词潮" />
+
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="ambient" aria-hidden="true">
+      <span class="orb orb-a"></span>
+      <span class="orb orb-b"></span>
+      <span class="orb orb-c"></span>
+    </div>
+    <div class="grain" aria-hidden="true"></div>
+
+    <div id="root">
+      <div class="screen screen--center splash">
+        <div class="splash-mark">
+          <svg class="brand-mark" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+            <circle cx="20" cy="20" r="18.4" stroke="currentColor" stroke-opacity=".35" />
+            <path
+              d="M8.5 22c3.6-7.4 7.2-7.4 10.8 0s7.2 7.4 10.8 0"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            />
+          </svg>
+        </div>
+        <p class="splash-title">词潮</p>
+        <span class="spinner spinner--ink"></span>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <noscript>
+      <div class="screen screen--center">
+        <h1 class="center-title">需要 JavaScript</h1>
+        <p class="center-copy">词潮是纯前端离线应用，请开启 JavaScript 后重新打开。</p>
+      </div>
+    </noscript>
+
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,50 @@
+{
+  "id": "./",
+  "name": "词潮 · 英语刷词器",
+  "short_name": "词潮",
+  "description": "离线英语刷词器：五级生词本、三键作答、本地进度与提醒。",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#f4f0e6",
+  "theme_color": "#f4f0e6",
+  "categories": ["education", "productivity"],
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "看看新词",
+      "short_name": "新词",
+      "url": "./#/home",
+      "description": "进入新词队列"
+    },
+    {
+      "name": "今日复习",
+      "short_name": "复习",
+      "url": "./#/today",
+      "description": "查看今日到期词"
+    }
+  ]
+}
