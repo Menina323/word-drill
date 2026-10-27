@@ -275,3 +275,96 @@ export function guessImportKind(text, filename = '') {
   const trimmed = String(text ?? '').trim();
   return trimmed.startsWith('[') || trimmed.startsWith('{') ? 'json' : 'csv';
 }
+
+/**
+ * Parse a custom word-book paste.
+ *
+ * Supported:
+ *   ability
+ *   ability,n. 能力
+ *   ability,əˈbɪləti,n. 能力
+ *   word,phonetic,definition (with header)
+ *   JSON array / KyleBing shape
+ *
+ * A two-column no-header file is treated as word,definition because notebooks
+ * are primarily about collecting meanings, not bulk phonetic backfill.
+ */
+export function parseWordBookText(input) {
+  const raw = String(input ?? '').replace(/^\uFEFF/, '').trim();
+  if (!raw) throw new Error('先粘贴一些单词');
+  if (raw.startsWith('[') || raw.startsWith('{')) {
+    const parsed = parseJsonText(raw);
+    return { ...parsed, format: 'json' };
+  }
+
+  const rows = parseCsvRows(
+    raw
+      .split(/\r?\n/)
+      .filter((line) => !line.trim().startsWith('#'))
+      .join('\n'),
+  );
+  if (!rows.length) throw new Error('没有可识别的行');
+
+  const header = rows[0].map(normalizeHeader);
+  const looksLikeHeader = header.some((cell) =>
+    ['word', 'text', '单词', 'phonetic', '音标', 'definition', 'meaning', '释义', '翻译'].includes(cell),
+  );
+
+  let start = 0;
+  let wordIndex = 0;
+  let phoneticIndex = -1;
+  let definitionIndex = -1;
+  let width = Math.max(...rows.map((row) => row.length));
+
+  if (looksLikeHeader) {
+    start = 1;
+    wordIndex = findColumn(header, ['word', 'text', '单词']);
+    const pIndex = findColumn(header, ['phonetic', 'ipa', '音标', 'pronunciation']);
+    const dIndex = findColumn(header, ['definition', 'meaning', '释义', '翻译', 'translation']);
+    if (wordIndex < 0) wordIndex = 0;
+    phoneticIndex = pIndex;
+    definitionIndex = dIndex;
+    width = Math.max(...rows.slice(1).map((row) => row.length));
+  } else if (width === 1) {
+    phoneticIndex = -1;
+    definitionIndex = -1;
+  } else if (width === 2) {
+    phoneticIndex = -1;
+    definitionIndex = 1;
+  } else {
+    phoneticIndex = 1;
+    definitionIndex = 2;
+  }
+
+  const mapped = [];
+  for (let i = start; i < rows.length; i += 1) {
+    const cells = rows[i];
+    const text = String(cells[wordIndex] ?? '').trim();
+    if (!text) continue;
+    mapped.push({
+      text,
+      phonetic: phoneticIndex >= 0 ? String(cells[phoneticIndex] ?? '').trim() : '',
+      definition: definitionIndex >= 0 ? String(cells[definitionIndex] ?? '').trim() : '',
+    });
+  }
+  if (!mapped.length) throw new Error('没有找到有效单词');
+
+  const seen = new Set();
+  const entries = [];
+  let duplicates = 0;
+  for (const entry of mapped) {
+    if (seen.has(entry.text)) {
+      duplicates += 1;
+      continue;
+    }
+    seen.add(entry.text);
+    entries.push(entry);
+  }
+  return {
+    entries,
+    total: mapped.length,
+    duplicatesInFile: duplicates,
+    format: 'csv',
+  };
+}
+
