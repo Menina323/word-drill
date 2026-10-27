@@ -1,6 +1,6 @@
 /* Word Drill service worker — offline shell + local reminder checks. */
 
-const CACHE_NAME = 'word-drill-v1.0.10';
+const CACHE_NAME = 'word-drill-v1.1.1';
 const APP_SHELL = [
   './',
   './index.html',
@@ -20,7 +20,9 @@ const APP_SHELL = [
   './icons/badge-96.png',
   './icons/favicon.svg',
   './data/cet6.json',
+  './data/phonetics.json',
   './data/LICENSE-KyleBing.txt',
+  './data/LICENSE-IPA-Dict.txt',
 ];
 
 self.addEventListener('install', (event) => {
@@ -129,7 +131,7 @@ self.addEventListener('periodicsync', (event) => {
 
 function openDb() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('word-drill', 1);
+    const request = indexedDB.open('word-drill', 2);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
     request.onupgradeneeded = () => {
@@ -143,6 +145,10 @@ function openDb() {
       }
       if (!db.objectStoreNames.contains('meta')) {
         db.createObjectStore('meta', { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains('books')) {
+        const books = db.createObjectStore('books', { keyPath: 'id' });
+        books.createIndex('createdAt', 'createdAt', { unique: false });
       }
     };
   });
