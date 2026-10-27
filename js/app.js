@@ -25,7 +25,7 @@ import {
   selectEGate,
 } from './scheduler.js';
 import { sanitizeSettings, wordStore } from './store.js';
-import { parseCsvText, parseJsonText, parseVocabularyText, guessImportKind } from './seed.js';
+import { parseCsvText, parseJsonText, parseWordBookText, guessImportKind } from './seed.js';
 import { speech } from './speech.js';
 import { notifier } from './notify.js';
 
@@ -94,6 +94,11 @@ const state = {
   fatal: null,
   words: [],
   wordMap: new Map(),
+  books: [],
+  activeBookId: null,
+  newBookName: '',
+  bookText: '',
+  bookError: '',
   settings: { ...DEFAULT_SETTINGS },
   eGate: { date: localDateKey(), ids: [] },
   stats: { total: 0, newCount: 0, reviewCount: 0, dueCount: 0, missingPhonetic: 0 },
@@ -262,13 +267,45 @@ async function reloadWords() {
   await refreshDerived();
 }
 
+let phoneticFillPromise = null;
+
+async function fillPhoneticsIfNeeded() {
+  if (phoneticFillPromise) return phoneticFillPromise;
+  if (!state.words.some((word) => !String(word.phonetic ?? '').trim())) return 0;
+  phoneticFillPromise = (async () => {
+    try {
+      const response = await Promise.race([
+        fetch('./data/phonetics.json', { cache: 'force-cache' }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('phonetic map timeout')), 2500)),
+      ]);
+      if (!response.ok) return 0;
+      const map = await response.json();
+      const updated = await wordStore.applyPhoneticMap(map);
+      if (updated) {
+        state.words = await wordStore.getAllWords();
+        rebuildWordIndex();
+        recomputeStats();
+      }
+      return updated;
+    } catch (error) {
+      console.warn('word-drill: phonetic auto-fill skipped', error);
+      return 0;
+    }
+  })().finally(() => {
+    phoneticFillPromise = null;
+  });
+  return phoneticFillPromise;
+}
+
 /* ------------------------------------------------------------------ boot */
 
 async function boot() {
   try {
     state.settings = await wordStore.getSettings();
     state.words = await wordStore.getAllWords();
+    state.books = await wordStore.getBooks();
     rebuildWordIndex();
+    await fillPhoneticsIfNeeded();
     await refreshDerived({ persistGate: true });
     applyTheme();
 
@@ -278,7 +315,7 @@ async function boot() {
 
     state.ready = true;
     const hash = location.hash.replace(/^#\/?/, '');
-    if (['today', 'import', 'settings'].includes(hash)) state.route = hash;
+    if (['today', 'import', 'settings', 'books'].includes(hash)) state.route = hash;
 
     // Render immediately. Service-worker registration must never hold the app
     // hostage while a cache install or an unreachable CDN is pending.
@@ -349,6 +386,12 @@ function render() {
     case 'settings':
       body = renderSettings();
       break;
+    case 'books':
+      body = renderBooks();
+      break;
+    case 'book':
+      body = state.activeBookId ? renderBook() : renderBooks();
+      break;
     case 'home':
     default:
       body = renderHome();
@@ -373,7 +416,11 @@ function render() {
           ? '设置 · 词潮'
           : state.route === 'today'
             ? '今日复习 · 词潮'
-            : '词潮 · 英语刷词器';
+            : state.route === 'books'
+              ? '生词本 · 词潮'
+              : state.route === 'book'
+                ? `${state.books.find((book) => book.id === state.activeBookId)?.name ?? '生词本'} · 词潮`
+                : '词潮 · 英语刷词器';
 
   if (state.scrollTarget) {
     const target = state.scrollTarget;
@@ -420,6 +467,7 @@ function renderHome() {
           </div>
         </div>
         <div class="head-actions">
+          ${iconButton('book', 'nav', '生词本', '', 'books')}
           ${iconButton('import', 'nav', '导入词库', '', 'import')}
           ${iconButton('settings', 'nav', '设置', '', 'settings')}
         </div>
@@ -541,7 +589,8 @@ function renderStudy() {
   const total = session.ids.length;
   const position = clamp(cursor + 1, 1, total);
   const progress = Math.max(0, Math.min(100, (position / total) * 100));
-  const modeLabel = session.mode === 'new' ? '新词' : '生词复习';
+  const modeLabel =
+    session.mode === 'new' ? '新词' : session.mode === 'book' ? '生词本' : '生词复习';
   const wordClass =
     word.text.length > 16 ? 'word word--xlong' : word.text.length > 11 ? 'word word--long' : 'word';
   const revealed = Boolean(state.reveal && state.reveal.wordId === word.id);
@@ -576,11 +625,13 @@ function renderStudy() {
     <main class="word-stage">
       <div class="word-halo" aria-hidden="true"></div>
       <div class="word-block${revealed ? ' is-static' : ''}" key="${esc(word.id)}-${cursor}">
-        <h1 class="${wordClass}" aria-live="polite">${esc(word.text)}</h1>
+        <h1 class="${wordClass}" data-action="speak-current" data-speak-current role="button" tabindex="0" title="点一下发音" aria-label="朗读 ${esc(
+          word.text,
+        )}">${esc(word.text)}</h1>
         ${
           word.phonetic
             ? `<p class="phonetic">${esc(formatPhonetic(word.phonetic))}</p>`
-            : '<p class="phonetic phonetic--empty" aria-hidden="true">&nbsp;</p>'
+            : '<p class="phonetic phonetic--missing">音标待补全</p>'
         }
       </div>
       <div class="word-meaning${revealed ? ' is-visible' : ''}" aria-live="polite" aria-hidden="${
@@ -588,6 +639,9 @@ function renderStudy() {
       }">
         <span class="meaning-label">汉译</span>
         <p>${esc(meaning)}</p>
+        <span class="meaning-meta">不认识 ${formatNumber(
+          revealed ? state.reveal.unknownCount ?? word.unknownCount ?? 0 : 0,
+        )} 次</span>
       </div>
       <p class="study-hint">${
         revealed
@@ -626,7 +680,13 @@ function renderSummary() {
     <div class="page-shell page-shell--narrow">
       <header class="summary-head">
         <button class="icon-button glass" data-action="home" aria-label="回到首页">${icon('close')}</button>
-        <span class="summary-mode">${session?.mode === 'new' ? '新词一轮' : '复习一轮'}</span>
+        <span class="summary-mode">${
+          session?.mode === 'new'
+            ? '新词一轮'
+            : session?.mode === 'book'
+              ? '生词本一轮'
+              : '复习一轮'
+        }</span>
         <span class="topbar-spacer"></span>
       </header>
 
@@ -743,6 +803,184 @@ function dueRow(word, now) {
       ${icon('speaker', 'due-speaker')}
     </span>
   </button>`;
+}
+
+function bookWordCount(book) {
+  return (book.wordIds ?? []).filter((id) => state.wordMap.has(id)).length;
+}
+
+function shortDate(timestamp) {
+  if (!Number.isFinite(timestamp)) return '';
+  try {
+    return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(
+      new Date(timestamp),
+    );
+  } catch {
+    return '';
+  }
+}
+
+function renderBooks() {
+  return `<div class="screen screen--page">
+    <div class="page-shell">
+      ${topbar({ title: '生词本' })}
+
+      <main class="page-main">
+        <section class="page-hero book-hero">
+          <p class="eyebrow"><span class="eyebrow-line"></span>自定义词集</p>
+          <h1>把想记的词，<br><em>分开放。</em></h1>
+          <p class="lede">按来源、场景或心情建多个生词本。同一个词可以放进多本，学习进度只有一份。</p>
+        </section>
+
+        <div class="book-create">
+          <input id="new-book-name" type="text" maxlength="40" placeholder="新本名称，例如：阅读生词" value="${esc(
+            state.newBookName,
+          )}" autocomplete="off" />
+          <button class="button button--primary glass" type="button" data-action="create-book">${icon(
+            'plus',
+          )} 新建</button>
+        </div>
+
+        ${
+          state.books.length
+            ? `<section class="book-list" aria-label="生词本列表">
+                ${state.books
+                  .map((book) => {
+                    const count = bookWordCount(book);
+                    return `<button class="book-row" data-action="open-book" data-id="${esc(book.id)}">
+                      <span class="book-mark">${icon('book')}</span>
+                      <span class="book-copy">
+                        <strong>${esc(book.name)}</strong>
+                        <small>${formatNumber(count)} 词${
+                          book.createdAt ? ` · ${shortDate(book.createdAt)} 建` : ''
+                        }</small>
+                      </span>
+                      <span class="book-row-count">${formatNumber(count)}</span>
+                      <span class="book-chevron">${icon('chevron')}</span>
+                    </button>`;
+                  })
+                  .join('')}
+              </section>`
+            : `<section class="empty-state book-empty">
+                ${icon('book')}
+                <h2>还没有自定义生词本</h2>
+                <p>先在上面取个名字，再粘贴生词。</p>
+              </section>`
+        }
+      </main>
+    </div>
+  </div>`;
+}
+
+function renderBook() {
+  const book = state.books.find((item) => item.id === state.activeBookId);
+  if (!book) return renderBooks();
+  const words = (book.wordIds ?? [])
+    .map((id) => state.wordMap.get(id))
+    .filter(Boolean)
+    .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+  const learnable = words.filter((word) => !['mastered', 'tooEasy'].includes(word.group)).length;
+
+  return `<div class="screen screen--page">
+    <div class="page-shell">
+      ${topbar({
+        title: book.name,
+        right: `<button class="icon-button glass" data-action="delete-book" data-id="${esc(
+          book.id,
+        )}" aria-label="删除生词本">${icon('trash')}</button>`,
+      })}
+
+      <main class="page-main">
+        <section class="page-hero book-hero">
+          <p class="eyebrow"><span class="eyebrow-line"></span>生词本 · ${formatNumber(
+            words.length,
+          )} 词</p>
+          <h1>${esc(book.name)}</h1>
+          <p class="lede">${
+            words.length
+              ? `其中 ${formatNumber(learnable)} 个还可以继续学习。点单词可发音。`
+              : '还没有词。把今天遇到的生词粘进来吧。'
+          }</p>
+        </section>
+
+        <section class="panel book-import-panel">
+          <div class="section-head">
+            <h2>粘贴生词</h2>
+            <span>每行一个，或 CSV</span>
+          </div>
+          <p class="panel-copy">支持每行一个单词，也支持 <code>word,definition</code> 或 <code>word,phonetic,definition</code>。已存在的词会保留学习进度。</p>
+          <textarea id="book-text" class="text-area text-area--small" spellcheck="false" placeholder="abandonment
+abnormally,adv. 不正常地
+bait,beɪt,n. 饵；引诱物">${esc(state.bookText)}</textarea>
+          ${
+            state.bookError
+              ? `<p class="inline-error" role="alert">${icon('close')} ${esc(state.bookError)}</p>`
+              : ''
+          }
+          <button class="button button--primary glass" data-action="add-book-words" data-id="${esc(
+            book.id,
+          )}" ${state.busy ? 'disabled' : ''}>${icon('plus')} 导入到本册</button>
+        </section>
+
+        <section class="book-words" aria-label="本册单词">
+          <div class="section-head">
+            <h2>本册单词</h2>
+            <span>${formatNumber(words.length)} 个</span>
+          </div>
+          ${
+            words.length
+              ? words
+                  .map(
+                    (word) => `<button class="book-word-row" data-action="speak-word" data-id="${esc(
+                      word.id,
+                    )}">
+                      <span class="book-word-main">
+                        <span class="book-word-line">
+                          <span class="book-word-text">${esc(word.text)}</span>
+                          ${
+                            word.phonetic
+                              ? `<span class="book-word-phonetic">${esc(
+                                  formatPhonetic(word.phonetic),
+                                )}</span>`
+                              : '<span class="book-word-phonetic is-missing">音标待补全</span>'
+                          }
+                        </span>
+                        ${
+                          word.definition
+                            ? `<span class="book-word-definition">${esc(word.definition)}</span>`
+                            : '<span class="book-word-definition is-empty">暂无释义</span>'
+                        }
+                      </span>
+                      <span class="book-word-side">
+                        <span class="unknown-count">不认识 ${formatNumber(
+                          word.unknownCount ?? 0,
+                        )} 次</span>
+                        ${groupBadge(word.group)}
+                        ${icon('speaker', 'due-speaker')}
+                      </span>
+                    </button>`,
+                  )
+                  .join('')
+              : `<div class="empty-state">
+                  ${icon('book')}
+                  <h2>本册还是空的</h2>
+                  <p>在上面粘贴单词，或从别的生词本复制。</p>
+                </div>`
+          }
+        </section>
+
+        ${
+          learnable
+            ? `<div class="page-actions">
+                <button class="button button--primary glass" data-action="start-book" data-id="${esc(
+                  book.id,
+                )}">${icon('wave')} 开始看本册</button>
+              </div>`
+            : ''
+        }
+      </main>
+    </div>
+  </div>`;
 }
 
 function renderImport() {
@@ -1088,9 +1326,10 @@ function clamp(value, min, max) {
 /* ------------------------------------------------------------------ actions */
 
 async function navigate(route, { replace = false } = {}) {
-  const valid = ['home', 'study', 'summary', 'today', 'import', 'settings'];
+  const valid = ['home', 'study', 'summary', 'today', 'import', 'settings', 'books', 'book'];
   if (!valid.includes(route)) route = 'home';
   if ((route === 'study' || route === 'summary') && !state.session) route = 'home';
+  if (route === 'book' && !state.activeBookId) route = 'books';
   state.route = route;
   const hash = `#/${route}`;
   if (replace) history.replaceState({ route }, '', hash);
@@ -1102,6 +1341,10 @@ async function navigate(route, { replace = false } = {}) {
 function goBack() {
   if (state.route === 'study') {
     exitSession();
+    return;
+  }
+  if (state.route === 'book') {
+    navigate('books', { replace: true });
     return;
   }
   if (state.route === 'summary') {
@@ -1145,6 +1388,106 @@ async function startSession(mode, { dueOnly = false } = {}) {
   navigate('study');
 }
 
+async function startBookSession(bookId) {
+  const book = state.books.find((item) => item.id === bookId);
+  if (!book) {
+    showToast('生词本不存在', 'error');
+    return;
+  }
+  const queue = (book.wordIds ?? [])
+    .map((id) => state.wordMap.get(id))
+    .filter((word) => word && !['mastered', 'tooEasy'].includes(word.group));
+  if (!queue.length) {
+    showToast('本册没有可以继续学习的词', 'neutral');
+    return;
+  }
+  state.session = {
+    mode: 'book',
+    scope: 'book',
+    bookId,
+    ids: queue.map((word) => word.id),
+    index: 0,
+    results: { known: 0, unknown: 0, easy: 0 },
+    startedAt: Date.now(),
+  };
+  navigate('study');
+}
+
+async function createBook() {
+  const input = document.getElementById('new-book-name');
+  const name = String(input?.value ?? state.newBookName).trim();
+  if (!name) {
+    showToast('先给生词本取个名字', 'error');
+    return;
+  }
+  try {
+    state.busy = true;
+    const book = await wordStore.createBook(name);
+    state.books = await wordStore.getBooks();
+    state.newBookName = '';
+    state.activeBookId = book.id;
+    state.bookText = '';
+    state.bookError = '';
+    showToast(`已新建「${book.name}」`, 'good');
+    state.busy = false;
+    navigate('book');
+  } catch (error) {
+    state.busy = false;
+    showToast(error.message, 'error');
+  }
+}
+
+function openBook(bookId) {
+  if (!state.books.some((book) => book.id === bookId)) return;
+  state.activeBookId = bookId;
+  state.bookText = '';
+  state.bookError = '';
+  navigate('book');
+}
+
+async function deleteBook(bookId) {
+  const book = state.books.find((item) => item.id === bookId);
+  if (!book) return;
+  const confirmed = window.confirm(
+    `删除生词本「${book.name}」？单词和学习进度不会被删除。`,
+  );
+  if (!confirmed) return;
+  await wordStore.deleteBook(bookId);
+  state.books = await wordStore.getBooks();
+  if (state.activeBookId === bookId) state.activeBookId = null;
+  navigate('books', { replace: true });
+  showToast('生词本已删除，单词仍在词库', 'good');
+}
+
+async function addBookWords(bookId) {
+  const text = state.bookText || document.getElementById('book-text')?.value || '';
+  if (!text.trim()) {
+    showToast('先粘贴一些单词', 'error');
+    return;
+  }
+  state.busy = true;
+  state.bookError = '';
+  try {
+    const parsed = parseWordBookText(text);
+    const result = await wordStore.addWordsToBook(bookId, parsed.entries);
+    state.words = await wordStore.getAllWords();
+    state.books = await wordStore.getBooks();
+    rebuildWordIndex();
+    recomputeStats();
+    state.bookText = '';
+    showToast(
+      `新增 ${formatNumber(result.added)} 个词，${formatNumber(result.linked)} 个加入本册`,
+      'good',
+    );
+  } catch (error) {
+    state.bookError = error.message;
+    showToast(error.message, 'error');
+  } finally {
+    state.busy = false;
+    render();
+  }
+}
+
 function exitSession() {
   clearReveal();
   speech.stop();
@@ -1157,9 +1500,10 @@ function exitSession() {
 async function restartSession() {
   if (!state.session) return;
   clearReveal();
-  const { mode, scope } = state.session;
+  const { mode, scope, bookId } = state.session;
   state.session = null;
-  await startSession(mode, { dueOnly: scope === 'due' });
+  if (mode === 'book') await startBookSession(bookId);
+  else await startSession(mode, { dueOnly: scope === 'due' });
 }
 
 function clearReveal({ unlock = true } = {}) {
@@ -1212,7 +1556,7 @@ async function handleAnswer(value) {
   let updated;
   try {
     if (value === 'known') {
-      updated = answerKnown(word, { fromReview: session.mode === 'review' });
+      updated = answerKnown(word, { fromReview: session.mode !== 'new' });
     } else if (value === 'unknown') {
       updated = answerUnknown(word);
     } else {
@@ -1243,6 +1587,7 @@ async function handleAnswer(value) {
     state.reveal = {
       wordId: word.id,
       definition: (updated.definition || word.definition || '暂无汉译').trim(),
+      unknownCount: updated.unknownCount ?? word.unknownCount ?? 0,
       nextIndex,
     };
     state.busy = true;
@@ -1445,6 +1790,8 @@ async function restoreBackupFile(file) {
       const result = await wordStore.restoreBackup(data);
       state.settings = await wordStore.getSettings();
       state.words = await wordStore.getAllWords();
+      state.books = await wordStore.getBooks();
+      state.activeBookId = null;
       rebuildWordIndex();
       await ensureEGate({ persist: true });
       recomputeStats();
@@ -1475,6 +1822,10 @@ async function clearAllData() {
   await wordStore.clearAll();
   state.words = [];
   state.wordMap = new Map();
+  state.books = [];
+  state.activeBookId = null;
+  state.bookText = '';
+  state.bookError = '';
   state.settings = sanitizeSettings(DEFAULT_SETTINGS);
   state.eGate = { date: localDateKey(), ids: [] };
   state.stats = { total: 0, newCount: 0, reviewCount: 0, dueCount: 0, missingPhonetic: 0 };
@@ -1557,6 +1908,21 @@ async function onClick(event) {
         break;
       case 'start-due':
         await startSession('review', { dueOnly: true });
+        break;
+      case 'start-book':
+        await startBookSession(actionEl.dataset.id);
+        break;
+      case 'create-book':
+        await createBook();
+        break;
+      case 'open-book':
+        openBook(actionEl.dataset.id);
+        break;
+      case 'delete-book':
+        await deleteBook(actionEl.dataset.id);
+        break;
+      case 'add-book-words':
+        await addBookWords(actionEl.dataset.id);
         break;
       case 'answer':
         await handleAnswer(actionEl.dataset.value);
@@ -1664,6 +2030,8 @@ async function onClick(event) {
 function onInput(event) {
   if (event.target.id === 'import-text') state.importText = event.target.value;
   if (event.target.id === 'backfill-text') state.backfillText = event.target.value;
+  if (event.target.id === 'new-book-name') state.newBookName = event.target.value;
+  if (event.target.id === 'book-text') state.bookText = event.target.value;
 }
 
 async function onChange(event) {
@@ -1702,6 +2070,16 @@ async function onChange(event) {
 
 function onKeyDown(event) {
   if (event.target.matches('input, textarea, select')) return;
+  if (
+    (event.key === 'Enter' || event.key === ' ') &&
+    event.target.closest('[data-speak-current]')
+  ) {
+    event.preventDefault();
+    const session = state.session;
+    const word = session ? state.wordMap.get(session.ids[session.index]) : null;
+    if (word) speech.speak(word.text);
+    return;
+  }
   if (state.route === 'study' && state.session) {
     if (event.key === '1') {
       event.preventDefault();
@@ -1754,10 +2132,12 @@ setupDragAndDrop();
 
 window.addEventListener('popstate', () => {
   const route = location.hash.replace(/^#\/?/, '') || 'home';
-  if (!['home', 'study', 'summary', 'today', 'import', 'settings'].includes(route)) {
+  if (!['home', 'study', 'summary', 'today', 'import', 'settings', 'books', 'book'].includes(route)) {
     state.route = 'home';
   } else if ((route === 'study' || route === 'summary') && !state.session) {
     state.route = 'home';
+  } else if (route === 'book' && !state.activeBookId) {
+    state.route = 'books';
   } else {
     state.route = route;
   }
