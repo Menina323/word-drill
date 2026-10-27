@@ -9,9 +9,10 @@
 import { createWord, DEFAULT_SETTINGS, newId } from './scheduler.js';
 
 export const DB_NAME = 'word-drill';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 export const WORDS = 'words';
 export const META = 'meta';
+export const BOOKS = 'books';
 
 function assertIndexedDb() {
   if (!globalThis.indexedDB) {
@@ -96,6 +97,10 @@ export class WordStore {
         if (!db.objectStoreNames.contains(META)) {
           db.createObjectStore(META, { keyPath: 'key' });
         }
+        if (!db.objectStoreNames.contains(BOOKS)) {
+          const books = db.createObjectStore(BOOKS, { keyPath: 'id' });
+          books.createIndex('createdAt', 'createdAt', { unique: false });
+        }
       });
       request.addEventListener('success', () => {
         const db = request.result;
@@ -170,6 +175,132 @@ export class WordStore {
     const word = createWord({ text, phonetic, definition }, now);
     await this.putWord(word);
     return word;
+  }
+
+  async getBooks() {
+    const db = await this.open();
+    const tx = db.transaction(BOOKS, 'readonly');
+    const books = await requestDone(tx.objectStore(BOOKS).getAll());
+    return books.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+  }
+
+  async getBook(id) {
+    const db = await this.open();
+    const tx = db.transaction(BOOKS, 'readonly');
+    return requestDone(tx.objectStore(BOOKS).get(id));
+  }
+
+  async createBook(name, now = Date.now()) {
+    const clean = String(name ?? '').trim().slice(0, 40);
+    if (!clean) throw new Error('生词本名称不能为空');
+    const book = {
+      id: newId(),
+      name: clean,
+      wordIds: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const db = await this.open();
+    const tx = db.transaction(BOOKS, 'readwrite');
+    tx.objectStore(BOOKS).put(book);
+    await transactionDone(tx);
+    return book;
+  }
+
+  async deleteBook(id) {
+    const db = await this.open();
+    const tx = db.transaction(BOOKS, 'readwrite');
+    tx.objectStore(BOOKS).delete(id);
+    await transactionDone(tx);
+  }
+
+  /**
+   * Add pasted words to a named book. Existing words keep their progress;
+   * new words are created in the main library and start in group "new".
+   */
+  async addWordsToBook(bookId, entries, { now = Date.now() } = {}) {
+    const cleanEntries = [];
+    const seen = new Set();
+    for (const entry of entries ?? []) {
+      const text = String(entry?.text ?? '').trim();
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      cleanEntries.push({
+        text,
+        phonetic: String(entry?.phonetic ?? '').trim(),
+        definition: String(entry?.definition ?? '').trim(),
+      });
+    }
+    if (!cleanEntries.length) throw new Error('没有可导入的单词');
+
+    const db = await this.open();
+    const tx = db.transaction([WORDS, BOOKS], 'readwrite');
+    const wordStore = tx.objectStore(WORDS);
+    const bookStore = tx.objectStore(BOOKS);
+    const book = await requestDone(bookStore.get(bookId));
+    if (!book) throw new Error('生词本不存在');
+
+    const all = await requestDone(wordStore.getAll());
+    const byText = new Map(all.map((word) => [word.text, word]));
+    const wordIds = new Set(Array.isArray(book.wordIds) ? book.wordIds : []);
+    let added = 0;
+    let supplemented = 0;
+    const before = wordIds.size;
+
+    cleanEntries.forEach((entry, index) => {
+      let word = byText.get(entry.text);
+      if (word) {
+        let changed = false;
+        if (!String(word.phonetic ?? '').trim() && entry.phonetic) {
+          word.phonetic = entry.phonetic;
+          changed = true;
+        }
+        if (!String(word.definition ?? '').trim() && entry.definition) {
+          word.definition = entry.definition;
+          changed = true;
+        }
+        if (changed) {
+          supplemented += 1;
+          wordStore.put(word);
+        }
+      } else {
+        word = createWord(entry, now + index);
+        byText.set(word.text, word);
+        wordStore.put(word);
+        added += 1;
+      }
+      wordIds.add(word.id);
+    });
+
+    book.wordIds = [...wordIds];
+    book.updatedAt = now;
+    bookStore.put(book);
+    await transactionDone(tx);
+    return {
+      added,
+      linked: wordIds.size - before,
+      supplemented,
+      totalBook: book.wordIds.length,
+    };
+  }
+
+  async applyPhoneticMap(map) {
+    if (!map || typeof map !== 'object') return 0;
+    const db = await this.open();
+    const tx = db.transaction(WORDS, 'readwrite');
+    const store = tx.objectStore(WORDS);
+    const words = await requestDone(store.getAll());
+    let updated = 0;
+    for (const word of words) {
+      if (String(word.phonetic ?? '').trim()) continue;
+      const phonetic = map[word.text];
+      if (typeof phonetic !== 'string' || !phonetic.trim()) continue;
+      word.phonetic = phonetic.trim();
+      store.put(word);
+      updated += 1;
+    }
+    await transactionDone(tx);
+    return updated;
   }
 
   async deleteWord(id) {
@@ -347,17 +478,19 @@ export class WordStore {
   }
 
   async exportData(settings) {
-    const [words, storedSettings, eGate] = await Promise.all([
+    const [words, storedSettings, eGate, books] = await Promise.all([
       this.getAllWords(),
       this.getSettings(),
       this.getMeta('eGate', null),
+      this.getBooks(),
     ]);
     return {
       app: 'word-drill',
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       settings: settings ?? storedSettings,
       eGate,
+      books,
       words,
     };
   }
@@ -407,12 +540,35 @@ export class WordStore {
 
     const currentSettings = await this.getSettings();
     const settings = sanitizeSettings(data.settings ?? currentSettings);
+    const rawBooks = Array.isArray(data.books) ? data.books : [];
+    const books = [];
+    const bookIds = new Set();
+    for (const raw of rawBooks) {
+      const name = String(raw?.name ?? '').trim().slice(0, 40);
+      if (!name) continue;
+      let id = typeof raw.id === 'string' && raw.id ? raw.id : newId();
+      if (bookIds.has(id)) id = newId();
+      bookIds.add(id);
+      books.push({
+        id,
+        name,
+        wordIds: Array.isArray(raw.wordIds)
+          ? [...new Set(raw.wordIds.filter((value) => typeof value === 'string'))]
+          : [],
+        createdAt: Number.isFinite(Number(raw.createdAt)) ? Number(raw.createdAt) : Date.now(),
+        updatedAt: Number.isFinite(Number(raw.updatedAt)) ? Number(raw.updatedAt) : Date.now(),
+      });
+    }
+
     const db = await this.open();
-    const tx = db.transaction([WORDS, META], 'readwrite');
+    const tx = db.transaction([WORDS, META, BOOKS], 'readwrite');
     const wordStore = tx.objectStore(WORDS);
     const metaStore = tx.objectStore(META);
+    const bookStore = tx.objectStore(BOOKS);
     wordStore.clear();
+    bookStore.clear();
     for (const word of byText.values()) wordStore.put(word);
+    for (const book of books) bookStore.put(book);
     metaStore.put({ key: 'settings', value: settings });
     if (data.eGate?.date && Array.isArray(data.eGate.ids)) {
       metaStore.put({ key: 'eGate', value: { date: data.eGate.date, ids: data.eGate.ids } });
@@ -420,14 +576,15 @@ export class WordStore {
       metaStore.delete('eGate');
     }
     await transactionDone(tx);
-    return { restored: byText.size, settings };
+    return { restored: byText.size, books: books.length, settings };
   }
 
   async clearAll() {
     const db = await this.open();
-    const tx = db.transaction([WORDS, META], 'readwrite');
+    const tx = db.transaction([WORDS, META, BOOKS], 'readwrite');
     tx.objectStore(WORDS).clear();
     tx.objectStore(META).clear();
+    tx.objectStore(BOOKS).clear();
     await transactionDone(tx);
   }
 
