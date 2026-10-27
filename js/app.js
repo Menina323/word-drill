@@ -798,6 +798,9 @@ function dueRow(word, now) {
       ${word.definition ? `<span class="due-definition">${esc(word.definition)}</span>` : ''}
     </span>
     <span class="due-side">
+      <span class="unknown-count" title="被标记不认识的次数">✕ ${formatNumber(
+        word.unknownCount ?? 0,
+      )}</span>
       ${groupBadge(word.group)}
       <span class="due-time">${esc(formatDueLabel(word.nextReviewAt, now))}</span>
       ${icon('speaker', 'due-speaker')}
