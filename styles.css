@@ -989,6 +989,14 @@ h1 em {
   text-wrap: pretty;
 }
 
+.meaning-meta {
+  display: inline-block;
+  margin-top: 7px;
+  color: var(--ink-faint);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
 .word-block.is-static {
   animation: none;
 }
@@ -1041,6 +1049,14 @@ h1 em {
   word-break: normal;
   text-wrap: balance;
   text-shadow: 0 18px 50px color-mix(in srgb, var(--ink) 12%, transparent);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.16s ease, opacity 0.16s ease;
+}
+
+.word:active {
+  transform: scale(0.985);
+  opacity: 0.88;
 }
 
 .word--long {
@@ -1065,6 +1081,13 @@ h1 em {
 
 .phonetic--empty {
   margin-top: 20px;
+}
+
+.phonetic--missing {
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  font-style: italic;
 }
 
 .study-hint {
@@ -1483,6 +1506,244 @@ h1 em {
   margin: 16px 0 0;
   color: var(--ink-faint);
   font-size: 10.5px;
+}
+
+/* ------------------------------------------------------------------ books */
+
+.book-hero {
+  margin-bottom: 26px;
+}
+
+.book-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 9px;
+  margin-bottom: 26px;
+}
+
+.book-create input {
+  min-width: 0;
+  height: 54px;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface) 56%, transparent);
+  font-size: 13px;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.book-create input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.book-create .button {
+  width: auto;
+  min-height: 54px;
+  padding: 0 20px;
+  font-size: 13px;
+}
+
+.book-list {
+  border-top: 1px solid var(--line);
+}
+
+.book-row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  padding: 14px 2px;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  text-align: left;
+  transition: background 0.2s ease;
+}
+
+.book-row:hover {
+  background: color-mix(in srgb, var(--surface-strong) 28%, transparent);
+}
+
+.book-mark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  flex: none;
+}
+
+.book-mark .icon {
+  width: 19px;
+  height: 19px;
+}
+
+.book-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.book-copy strong {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.book-copy small {
+  color: var(--ink-faint);
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+}
+
+.book-row-count {
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: 23px;
+  font-variant-numeric: tabular-nums;
+}
+
+.book-chevron {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  color: var(--ink-faint);
+}
+
+.book-chevron .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.book-empty {
+  border-bottom: 0;
+}
+
+.book-import-panel {
+  margin-bottom: 24px;
+}
+
+.book-import-panel .button {
+  margin-top: 12px;
+}
+
+.book-import-panel .inline-error {
+  margin: 10px 0 0;
+}
+
+.book-words {
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.book-word-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 2px;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  text-align: left;
+}
+
+.book-word-row:hover {
+  background: color-mix(in srgb, var(--surface-strong) 26%, transparent);
+}
+
+.book-word-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.book-word-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.book-word-text {
+  font-family: var(--font-display);
+  font-size: 22px;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.book-word-phonetic {
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+}
+
+.book-word-phonetic.is-missing,
+.book-word-definition.is-empty {
+  color: color-mix(in srgb, var(--ink-faint) 72%, var(--rose));
+}
+
+.book-word-definition {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.book-word-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.unknown-count {
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: var(--ink-faint);
+  background: var(--chip);
+  font-size: 9px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.book-words .due-speaker {
+  width: 14px;
+  height: 14px;
+  color: var(--ink-faint);
+}
+
+@media (max-width: 540px) {
+  .book-create {
+    grid-template-columns: 1fr;
+  }
+
+  .book-create .button {
+    width: 100%;
+  }
+
+  .book-word-side .group-badge {
+    display: none;
+  }
+
+  .unknown-count {
+    font-size: 8.5px;
+  }
 }
 
 .empty-state {
