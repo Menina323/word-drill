@@ -1,6 +1,6 @@
 /* Word Drill service worker — offline shell + local reminder checks. */
 
-const CACHE_NAME = 'word-drill-v1.1.2';
+const CACHE_NAME = 'word-drill-v1.1.3';
 const APP_SHELL = [
   './',
   './index.html',
