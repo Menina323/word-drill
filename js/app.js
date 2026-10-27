@@ -1414,6 +1414,7 @@ async function startBookSession(bookId) {
 }
 
 async function createBook() {
+  if (state.busy) return;
   const input = document.getElementById('new-book-name');
   const name = String(input?.value ?? state.newBookName).trim();
   if (!name) {
@@ -1460,6 +1461,7 @@ async function deleteBook(bookId) {
 }
 
 async function addBookWords(bookId) {
+  if (state.busy) return;
   const text = state.bookText || document.getElementById('book-text')?.value || '';
   if (!text.trim()) {
     showToast('先粘贴一些单词', 'error');
